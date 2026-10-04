@@ -36,6 +36,8 @@ h2{font-size:13px;color:var(--mute);margin:0 0 6px;font-weight:600}
 .up{padding:9px 0;border-bottom:1px dashed var(--line);font-size:14px}.up:last-child{border-bottom:none}
 .up b{display:block;font-size:12px;color:var(--acc);font-weight:600}
 .up.rest{color:var(--mute)}
+.pl{font-size:12px;color:var(--mute);margin-top:12px}
+.up .pl2{display:block;font-size:12px;color:var(--mute);margin-top:2px}
 .goal{font-size:14px}
 .goal .gl{font-size:12px;color:var(--acc);margin-bottom:4px}
 textarea{width:100%;font:inherit;font-size:15px;line-height:1.55;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:10px;padding:10px;resize:vertical;min-height:96px}
@@ -95,6 +97,14 @@ input{width:100%;padding:10px;border-radius:8px;border:1px solid var(--line);bac
     <div id="items"></div>
   </div>
 
+  <div class="card" id="pianoCard">
+    <h2>🎹 오늘 피아노 <span id="pianoBadge" class="badge hidden">완료</span></h2>
+    <div id="pianoTask" class="task" style="margin-top:6px;font-size:15px"></div>
+    <div class="note" id="pianoMeta" style="margin-top:6px"></div>
+    <textarea id="pianoToday" placeholder="Piano Quest 메모" rows="3" style="margin-top:10px"></textarea>
+    <div class="mstat" id="pianoStat"></div>
+  </div>
+
   <div class="card" id="weekCard">
     <h2>이번 주 목표</h2>
     <div class="goal"><div class="gl" id="weekLabel"></div><div id="weekItems"></div></div>
@@ -122,7 +132,7 @@ input{width:100%;padding:10px;border-radius:8px;border:1px solid var(--line);bac
   </div>
 
   <div class="note" id="sync"></div>
-  <div class="note">과제 체크와 목록 편집은 PC 앱에서 해 주세요. 메모는 폰에서도 고칠 수 있고 PC와 자동으로 맞춰져요.</div>
+  <div class="note">과제 체크와 목록 편집은 PC 앱에서 해 주세요. 메모(피아노 메모 포함)는 폰에서도 고칠 수 있고 PC와 자동으로 맞춰져요.</div>
   <div class="row"><button class="btn small" id="logout">연결 해제</button></div>
 </section>
 
@@ -199,9 +209,18 @@ function draw(snap,offline){
     const r=document.createElement('div');r.className='up'+(x.rest?' rest':'');
     const h=document.createElement('b');const xd=new Date(x.date+'T00:00:00');h.textContent=(xd.getMonth()+1)+'/'+xd.getDate()+' '+x.dow;
     const t=document.createElement('span');t.textContent=x.rest?'휴식일':(x.task||'(과제 없음)');
-    r.append(h,t);up.append(r);
+    r.append(h,t);
+    if(!x.rest&&x.piano&&x.piano.task){const pl=document.createElement('span');pl.className='pl2';pl.textContent='🎹 '+x.piano.task;r.append(pl)}
+    up.append(r);
   });
   $('upCard').classList.toggle('hidden',!next.length);
+  const pi=live?snapD.piano:(plan&&plan.piano);
+  $('pianoCard').classList.toggle('hidden',!pi);
+  if(pi){
+    $('pianoTask').textContent=pi.task||'';
+    $('pianoMeta').textContent=[pi.min?pi.min+'분':'',pi.alt?'5분 대체 과제':'',pi.topic||''].filter(Boolean).join(' · ');
+    $('pianoBadge').classList.toggle('hidden',!(live&&pi.done));
+  }
   drawGoals(snapD,today);
   const at=snap.at?new Date(snap.at):null;
   $('sync').textContent=(offline?'오프라인이라 저장된 내용을 보여 줘요. ':'')+(at&&!isNaN(at)?'PC에서 마지막으로 받은 시각 '+(at.getMonth()+1)+'/'+at.getDate()+' '+hm(at):'');
@@ -238,7 +257,7 @@ async function load(){
     const snap=await fetchSnap();
     if(!snap){$('sync').textContent='아직 PC에서 보낸 데이터가 없어요. PC 앱의 설정 → 폰 동기화 → 지금 보내기를 눌러 주세요.';}
     else{C.snap=snap;store();draw(snap,false)}
-    try{await fetchMemos()}catch(e){/* 메모 실패는 화면 전체를 막지 않음 */}
+    for(const kind of Object.keys(KINDS)){try{await fetchNotes(kind)}catch(e){setStat(kind,ymd(new Date()),String(e&&e.message||e),true)}}  // 메모 실패는 화면 전체를 막지 않음
     drawMemos();retryPending();
   }catch(e){
     if(C.snap)draw(C.snap,true);
@@ -249,45 +268,65 @@ async function load(){
 }
 
 /* ── 메모 (양방향) ──
-   서버에서 마지막으로 본 버전(base)과 같을 때만 덮어써요. 그사이 PC에서 같은 날 메모를 고쳤다면
+   일반 메모와 Piano Quest 메모 두 종류가 있어요. 둘 다 같은 규칙이에요:
+   서버에서 마지막으로 본 버전(base)과 같을 때만 덮어쓰고, 그사이 PC에서 같은 날 메모를 고쳤다면
    두 내용을 합쳐서 둘 다 남겨요. 저장 못 한 글은 폰에 보관했다가 다시 시도해요. */
 const MEMO_SEP='\n\n— 다른 기기에서 쓴 내용 —\n';
 function memoMerge(a,b){a=a||'';b=b||'';if(a===b)return a;if(!a)return b;if(!b)return a;if(a.includes(b))return a;if(b.includes(a))return b;return a+MEMO_SEP+b}
-const ensureC=()=>{C.memo=C.memo||{};C.pend=C.pend||{}};ensureC();   // memo: {day:{text,base}}, pend: {day:저장 못 한 글}
+// st: 서버에서 받은 내용 {날짜:{text,base}}, pd: 저장 못 한 글 {날짜:글}
+const KINDS={memo:{table:'memos',st:'memo',pd:'pend',name:'메모',today:'memoToday',stat:'memoStat'},
+             piano:{table:'piano_notes',st:'pmemo',pd:'ppend',name:'피아노 메모',today:'pianoToday',stat:'pianoStat'}};
+const ensureC=()=>{C.memo=C.memo||{};C.pend=C.pend||{};C.pmemo=C.pmemo||{};C.ppend=C.ppend||{}};ensureC();
 const timers={},saving={};
+const tk=(kind,day)=>kind+':'+day;
 async function api(path,opt){
   const call=async tok=>fetch(base()+'/rest/v1/'+path,{...opt,headers:{apikey:C.k,Authorization:'Bearer '+tok,'Content-Type':'application/json',...(opt&&opt.headers||{})}});
   let r=await call(await access());
   if(r.status===401)r=await call(await access(true));
   return r;
 }
-function setStat(day,msg,err){
-  const el=day===ymd(new Date())?$('memoStat'):document.querySelector('[data-stat="'+day+'"]');
+function setStat(kind,day,msg,err){
+  const el=day===ymd(new Date())?$(KINDS[kind].stat):document.querySelector('[data-stat="'+tk(kind,day)+'"]');
   if(el){el.textContent=msg;el.classList.toggle('err',!!err)}
 }
-async function fetchMemos(){ensureC();
-  const r=await api('memos?select=day,text,updated_at&order=day.desc&limit=30');
-  if(!r.ok)throw new Error('메모 불러오기 실패 ('+r.status+')');
+function noteText(kind,day){ensureC();const K=KINDS[kind];return C[K.pd][day]!==undefined?C[K.pd][day]:(C[K.st][day]&&C[K.st][day].text)||''}
+function taFor(kind,day){
+  if(day===ymd(new Date()))return $(KINDS[kind].today);
+  const det=document.querySelector('details[data-day="'+day+'"]');
+  return det&&det.querySelector('textarea[data-kind="'+kind+'"]');
+}
+async function fetchNotes(kind){
+  ensureC();const K=KINDS[kind];
+  const r=await api(K.table+'?select=day,text,updated_at&order=day.desc&limit=30');
+  if(r.status===404)throw new Error(K.name+'용 표가 서버에 없어요. 안내서의 SQL을 실행해 주세요.');
+  if(!r.ok)throw new Error(K.name+' 불러오기 실패 ('+r.status+')');
   for(const row of await r.json()){
-    const cur=C.memo[row.day];
-    if(C.pend[row.day]!==undefined)continue;          // 저장 못 한 글이 있으면 그대로 둠
-    if(!cur||cur.base!==row.updated_at)C.memo[row.day]={text:row.text,base:row.updated_at};
+    const cur=C[K.st][row.day];
+    if(C[K.pd][row.day]!==undefined)continue;          // 저장 못 한 글이 있으면 그대로 둠
+    if(!cur||cur.base!==row.updated_at)C[K.st][row.day]={text:row.text,base:row.updated_at};
   }
   store();
 }
-function memoDays(){ensureC();
-  const today=ymd(new Date());
-  const days=new Set(Object.keys(C.memo).filter(d=>d!==today&&(C.memo[d].text||C.pend[d])));
-  return [...days].sort().reverse().slice(0,14);
+function memoDays(){
+  ensureC();const today=ymd(new Date()),set=new Set();
+  Object.values(KINDS).forEach(K=>{
+    Object.keys(C[K.st]).forEach(d=>{if(C[K.st][d].text)set.add(d)});
+    Object.keys(C[K.pd]).forEach(d=>set.add(d));
+  });
+  set.delete(today);
+  return [...set].sort().reverse().slice(0,14);
 }
-function drawMemos(){ensureC();
-  const today=ymd(new Date());
-  const t=$('memoToday');
-  if(t.dataset.day!==today){t.dataset.day=today;t.value='';delete t.dataset.dirty}
-  if(document.activeElement!==t&&!timers[today]&&!saving[today]){
-    const v=C.pend[today]!==undefined?C.pend[today]:(C.memo[today]&&C.memo[today].text)||'';
+function drawToday(kind){
+  ensureC();const K=KINDS[kind],today=ymd(new Date()),t=$(K.today),k=tk(kind,today);
+  if(t.dataset.day!==today){t.dataset.day=today;t.value=''}
+  if(document.activeElement!==t&&!timers[k]&&!saving[k]){
+    const v=noteText(kind,today);
     if(t.value!==v)t.value=v;
   }
+}
+function drawMemos(){
+  ensureC();
+  drawToday('memo');drawToday('piano');
   const box=$('pastMemos'),days=memoDays();
   $('pastCard').classList.toggle('hidden',!days.length);
   // 열려 있거나 편집 중인 항목은 건드리지 않고, 없는 것만 추가·갱신
@@ -295,77 +334,91 @@ function drawMemos(){ensureC();
   days.forEach(day=>{
     keep.add(day);
     let det=box.querySelector('details[data-day="'+day+'"]');
-    const text=C.pend[day]!==undefined?C.pend[day]:C.memo[day].text||'';
     if(!det){
       det=document.createElement('details');det.className='pm';det.dataset.day=day;
       const sm=document.createElement('summary');const b=document.createElement('b');const sp=document.createElement('span');sm.append(b,sp);
-      const ta=document.createElement('textarea');ta.dataset.day=day;
-      const st=document.createElement('div');st.className='mstat';st.dataset.stat=day;
-      ta.addEventListener('input',()=>onMemoInput(day,ta));ta.addEventListener('blur',()=>flushMemo(day,ta));
-      det.append(sm,ta,st);box.append(det);
+      det.append(sm);
+      Object.keys(KINDS).forEach(kind=>{
+        const lab=document.createElement('div');lab.className='pl';lab.textContent=kind==='piano'?'🎹 피아노 메모':'메모';
+        const ta=document.createElement('textarea');ta.dataset.day=day;ta.dataset.kind=kind;
+        const st=document.createElement('div');st.className='mstat';st.dataset.stat=tk(kind,day);
+        ta.addEventListener('input',()=>onNoteInput(kind,day,ta));ta.addEventListener('blur',()=>flushNote(kind,day,ta));
+        det.append(lab,ta,st);
+      });
+      box.append(det);
     }
     const [y,mo,dd]=day.split('-');const dow='일월화수목금토'[new Date(+y,+mo-1,+dd).getDay()];
     det.querySelector('b').textContent=(+mo)+'/'+(+dd)+' '+dow;
-    det.querySelector('summary span').textContent=text.split('\n')[0].slice(0,40)||'(비어 있음)';
-    const ta=det.querySelector('textarea');
-    if(document.activeElement!==ta&&!timers[day]&&!saving[day]&&ta.value!==text)ta.value=text;
+    const mt=noteText('memo',day),pt=noteText('piano',day);
+    det.querySelector('summary span').textContent=(mt||(pt?'🎹 '+pt:'')).split('\n')[0].slice(0,40)||'(비어 있음)';
+    det.querySelectorAll('textarea').forEach(ta=>{
+      const kind=ta.dataset.kind,k=tk(kind,day),text=kind==='piano'?pt:mt;
+      if(document.activeElement!==ta&&!timers[k]&&!saving[k]&&ta.value!==text)ta.value=text;
+    });
   });
   box.querySelectorAll('details').forEach(d=>{if(!keep.has(d.dataset.day))d.remove()});
 }
-function onMemoInput(day,ta){ensureC();
-  C.pend[day]=ta.value;store();setStat(day,'입력 중…');
-  clearTimeout(timers[day]);timers[day]=setTimeout(()=>{delete timers[day];saveMemo(day,ta)},1200);
+function onNoteInput(kind,day,ta){
+  ensureC();const K=KINDS[kind],k=tk(kind,day);
+  C[K.pd][day]=ta.value;store();setStat(kind,day,'입력 중…');
+  clearTimeout(timers[k]);timers[k]=setTimeout(()=>{delete timers[k];saveNote(kind,day,ta)},1200);
 }
-function flushMemo(day,ta){if(timers[day]){clearTimeout(timers[day]);delete timers[day];saveMemo(day,ta)}}
-async function saveMemo(day,ta){ensureC();
-  if(saving[day]){timers[day]=setTimeout(()=>{delete timers[day];saveMemo(day,ta)},600);return}
-  saving[day]=true;setStat(day,'저장 중…');
+function flushNote(kind,day,ta){const k=tk(kind,day);if(timers[k]){clearTimeout(timers[k]);delete timers[k];saveNote(kind,day,ta)}}
+async function saveNote(kind,day,ta){
+  ensureC();const K=KINDS[kind],k=tk(kind,day);
+  if(saving[k]){timers[k]=setTimeout(()=>{delete timers[k];saveNote(kind,day,ta)},600);return}
+  saving[k]=true;setStat(kind,day,'저장 중…');
   try{
     for(let tries=0;tries<4;tries++){
-      const text=C.pend[day]!==undefined?C.pend[day]:ta.value;
-      const cur=C.memo[day],now=new Date().toISOString();
+      const text=C[K.pd][day]!==undefined?C[K.pd][day]:ta.value;
+      const cur=C[K.st][day],now=new Date().toISOString();
       let r,rows;
       if(cur&&cur.base){
-        r=await api('memos?day=eq.'+encodeURIComponent(day)+'&updated_at=eq.'+encodeURIComponent(cur.base),{method:'PATCH',headers:{Prefer:'return=representation'},body:JSON.stringify({text,updated_at:now})});
+        r=await api(K.table+'?day=eq.'+encodeURIComponent(day)+'&updated_at=eq.'+encodeURIComponent(cur.base),{method:'PATCH',headers:{Prefer:'return=representation'},body:JSON.stringify({text,updated_at:now})});
         if(!r.ok)throw new Error('저장 실패 ('+r.status+')');
         rows=await r.json();
       }else{
-        r=await api('memos',{method:'POST',headers:{Prefer:'return=representation'},body:JSON.stringify({day,text,updated_at:now})});
+        r=await api(K.table,{method:'POST',headers:{Prefer:'return=representation'},body:JSON.stringify({day,text,updated_at:now})});
         if(r.status===409)rows=[];
+        else if(r.status===404)throw new Error(K.name+'용 표가 서버에 없어요 (안내서의 SQL 실행 필요)');
         else if(!r.ok)throw new Error('저장 실패 ('+r.status+')');
         else rows=await r.json();
       }
       if(rows.length){
-        C.memo[day]={text,base:rows[0].updated_at};
-        if(C.pend[day]===text)delete C.pend[day];   // 저장하는 사이 더 입력했다면 보관 유지
-        store();setStat(day,C.pend[day]===undefined?'저장됨 ✓':'입력 중…');return;
+        C[K.st][day]={text,base:rows[0].updated_at};
+        if(C[K.pd][day]===text)delete C[K.pd][day];   // 저장하는 사이 더 입력했다면 보관 유지
+        store();setStat(kind,day,C[K.pd][day]===undefined?'저장됨 ✓':'입력 중…');return;
       }
       // 충돌: 서버의 최신 내용을 받아 합친 뒤 다시 저장
-      const g=await api('memos?select=day,text,updated_at&day=eq.'+encodeURIComponent(day));
+      const g=await api(K.table+'?select=day,text,updated_at&day=eq.'+encodeURIComponent(day));
       if(!g.ok)throw new Error('저장 실패 ('+g.status+')');
       const got=await g.json(),remote=got[0];
-      if(!remote){C.memo[day]={text:'',base:null};continue}
+      if(!remote){C[K.st][day]={text:'',base:null};continue}
       const merged=memoMerge(text,remote.text);
-      C.memo[day]={text:remote.text,base:remote.updated_at};
-      C.pend[day]=merged;store();
+      C[K.st][day]={text:remote.text,base:remote.updated_at};
+      C[K.pd][day]=merged;store();
       if(ta.value===text)ta.value=merged;             // 그사이 더 쓰지 않았을 때만 화면 갱신
-      setStat(day,'PC의 내용과 합쳤어요');
+      setStat(kind,day,'PC의 내용과 합쳤어요');
     }
     throw new Error('여러 번 충돌했어요. 잠시 뒤 다시 시도해 주세요.');
-  }catch(e){setStat(day,'저장 못 했어요 — 폰에 보관 중이고 다시 시도해요. ('+(e&&e.message||e)+')',true)}
-  finally{saving[day]=false}
+  }catch(e){setStat(kind,day,'저장 못 했어요 — 폰에 보관 중이고 다시 시도해요. ('+(e&&e.message||e)+')',true)}
+  finally{saving[k]=false}
 }
-async function retryPending(){ensureC();
-  for(const day of Object.keys(C.pend)){
-    const ta=day===ymd(new Date())?$('memoToday'):document.querySelector('details[data-day="'+day+'"] textarea');
-    if(ta&&!timers[day]&&!saving[day])await saveMemo(day,ta);
-    else if(!ta){ // 화면에 없는 날짜의 보관 글도 올리기
-      const fake={value:C.pend[day]};await saveMemo(day,fake);
+async function retryPending(){
+  ensureC();
+  for(const kind of Object.keys(KINDS)){
+    const K=KINDS[kind];
+    for(const day of Object.keys(C[K.pd])){
+      const k=tk(kind,day);
+      if(timers[k]||saving[k])continue;
+      await saveNote(kind,day,taFor(kind,day)||{value:C[K.pd][day]});
     }
   }
 }
-$('memoToday').addEventListener('input',e=>onMemoInput(ymd(new Date()),e.target));
-$('memoToday').addEventListener('blur',e=>flushMemo(ymd(new Date()),e.target));
+$('memoToday').addEventListener('input',e=>onNoteInput('memo',ymd(new Date()),e.target));
+$('memoToday').addEventListener('blur',e=>flushNote('memo',ymd(new Date()),e.target));
+$('pianoToday').addEventListener('input',e=>onNoteInput('piano',ymd(new Date()),e.target));
+$('pianoToday').addEventListener('blur',e=>flushNote('piano',ymd(new Date()),e.target));
 window.addEventListener('online',()=>{if(C.rt)retryPending()});
 
 function start(){
@@ -391,7 +444,7 @@ $('login').onclick=async()=>{
   finally{$('login').disabled=false}
 };
 $('refresh').onclick=load;
-$('logout').onclick=()=>{if(Object.keys(C.pend||{}).length&&!confirm('저장 못 한 메모가 폰에 남아 있어요. 그래도 연결을 해제할까요?'))return;if(!confirm('이 폰의 연결을 해제할까요?'))return;C={};store();show('setup');$('code').value=''};
+$('logout').onclick=()=>{if((Object.keys(C.pend||{}).length+Object.keys(C.ppend||{}).length)&&!confirm('저장 못 한 메모가 폰에 남아 있어요. 그래도 연결을 해제할까요?'))return;if(!confirm('이 폰의 연결을 해제할까요?'))return;C={};store();show('setup');$('code').value=''};
 document.addEventListener('visibilitychange',()=>{if(!document.hidden&&C.rt)load()});
 setInterval(()=>{if(!document.hidden&&C.rt)load()},120000);
 start();
