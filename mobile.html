@@ -57,6 +57,7 @@ input{width:100%;padding:10px;border-radius:8px;border:1px solid var(--line);bac
 .err{color:#d55;font-size:13px;margin-top:8px;min-height:1.2em}
 .row{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
 .hidden{display:none}
+.dlr{display:flex;gap:8px;align-items:baseline;padding:8px 12px;margin-top:8px;border:1px solid var(--line);border-radius:10px;background:var(--card);font-size:14px}.dlr b{color:var(--acc);white-space:nowrap}.dlr.soon{border-color:var(--warn)}.dlr.soon b{color:var(--warn)}.dlr.over{border-color:#d55}.dlr.over b{color:#d55}.dlr span{flex:1;word-break:keep-all}
 </style>
 </head>
 <body>
@@ -79,6 +80,7 @@ input{width:100%;padding:10px;border-radius:8px;border:1px solid var(--line);bac
     <div><div class="date" id="date"></div><div class="phase" id="phase"></div><div class="lv" id="lv"></div></div>
     <button class="btn small" id="refresh" aria-label="새로고침">⟳</button>
   </div>
+  <div id="dlBar"></div>
   <div id="stale" class="stale hidden"></div>
 
   <div class="card">
@@ -221,11 +223,21 @@ function draw(snap,offline){
     $('pianoMeta').textContent=[pi.min?pi.min+'분':'',pi.alt?'5분 대체 과제':'',pi.topic||''].filter(Boolean).join(' · ');
     $('pianoBadge').classList.toggle('hidden',!(live&&pi.done));
   }
-  drawGoals(snapD,today);
+  drawGoals(snapD,today);drawDeadlines(snapD);
   const at=snap.at?new Date(snap.at):null;
   $('sync').textContent=(offline?'오프라인이라 저장된 내용을 보여 줘요. ':'')+(at&&!isNaN(at)?'PC에서 마지막으로 받은 시각 '+(at.getMonth()+1)+'/'+at.getDate()+' '+hm(at):'');
 }
 
+function drawDeadlines(snapD){
+  const box=$('dlBar');box.textContent='';
+  const base=new Date(ymd(new Date())+'T00:00:00');
+  (snapD.deadlines||[]).slice(0,4).forEach(x=>{
+    const dd=new Date(x.d+'T00:00:00'),n=Math.round((dd-base)/864e5);
+    const r=document.createElement('div');r.className='dlr'+(n<0?' over':n<=3?' soon':'');
+    const b=document.createElement('b');b.textContent=n<0?'D+'+(-n)+' 지남':n===0?'D-Day':'D-'+n;
+    const s=document.createElement('span');s.textContent=x.t+' · '+(dd.getMonth()+1)+'월 '+dd.getDate()+'일까지';
+    r.append(b,s);box.append(r)});
+}
 function mondayOf(d){const x=new Date(d.getFullYear(),d.getMonth(),d.getDate());x.setDate(x.getDate()-(x.getDay()+6)%7);return ymd(x)}
 function goalList(box,items){
   box.textContent='';
