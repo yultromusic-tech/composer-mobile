@@ -233,12 +233,14 @@ function goalList(box,items){
     const row=document.createElement('div');row.className='ck'+(i.x?' on':'');
     const b=document.createElement('div');b.className='box';b.textContent=i.x?'✓':'';
     const t=document.createElement('span');t.textContent=i.t;t.style.flex='1';
-    row.append(b,t);box.append(row);
+    row.append(b,t);
+    if(i.n){const g=document.createElement('span');g.className='tag';g.textContent='다음 주';row.append(g)}
+    box.append(row);
   });
 }
 function drawGoals(d,today){
   const w=d.week,m=d.month;
-  $('weekCard').classList.toggle('hidden',!w);$('monthCard').classList.toggle('hidden',!m);
+  $('weekCard').classList.toggle('hidden',!w);$('monthCard').classList.toggle('hidden',!m||!(m.items||[]).length);
   if(w){
     const same=w.key===mondayOf(new Date(today+'T00:00:00'));
     $('weekLabel').textContent=w.label+(same?'':' (PC에서 받은 지난 주 기준)');
